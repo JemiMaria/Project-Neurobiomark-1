@@ -1,0 +1,24 @@
+# Requirements for Dataset Cartography
+# Install with: pip install -r requirements.txt
+
+# Core ML libraries
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Data handling
+pandas>=2.0.0
+numpy>=1.24.0
+openpyxl>=3.1.0  # For reading Excel files
+
+# Image processing
+Pillow>=10.0.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Machine learning utilities
+scikit-learn>=1.3.0
+
+# Progress bars
+tqdm>=4.65.0
