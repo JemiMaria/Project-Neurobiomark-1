@@ -35,7 +35,8 @@ from config import (
     OPTUNA_N_TRIALS, OPTUNA_TIMEOUT, OPTUNA_PRUNER_WARMUP, OPTUNA_STUDY_NAME,
     OPTUNA_HEAD_LR_RANGE, OPTUNA_BACKBONE_LR_MULT_RANGE,
     OPTUNA_WEIGHT_DECAY_RANGE, OPTUNA_DROPOUT_RANGE,
-    OPTUNA_LABEL_SMOOTHING_RANGE, OPTUNA_FREEZE_EPOCHS_RANGE
+    OPTUNA_LABEL_SMOOTHING_RANGE, OPTUNA_FREEZE_EPOCHS_RANGE,
+    OPTUNA_BATCH_SIZE_CHOICES, OPTUNA_OPTIMIZER_CHOICES, OPTUNA_SCHEDULER_CHOICES
 )
 
 from data import (
@@ -146,6 +147,11 @@ class OptunaCV:
             p_noise = trial.suggest_float('p_noise', 0.0, 0.2)
             use_elastic = trial.suggest_categorical('use_elastic', [0, 1])
             
+            # New categorical hyperparameters
+            batch_size = trial.suggest_categorical('batch_size', OPTUNA_BATCH_SIZE_CHOICES)
+            optimizer_name = trial.suggest_categorical('optimizer', OPTUNA_OPTIMIZER_CHOICES)
+            scheduler_name = trial.suggest_categorical('scheduler', OPTUNA_SCHEDULER_CHOICES)
+            
             # Get transforms with suggested augmentation
             train_transform = get_train_transforms(
                 aug_level=aug_level,
@@ -165,7 +171,8 @@ class OptunaCV:
                     self.splits,
                     fold_id,
                     train_transform=train_transform,
-                    val_transform=val_transform
+                    val_transform=val_transform,
+                    batch_size=batch_size
                 )
                 
                 # Create model
@@ -179,7 +186,9 @@ class OptunaCV:
                     backbone_lr_multiplier=backbone_lr_mult,
                     weight_decay=weight_decay,
                     label_smoothing=label_smoothing,
-                    freeze_epochs=freeze_epochs
+                    freeze_epochs=freeze_epochs,
+                    optimizer_name=optimizer_name,
+                    scheduler_name=scheduler_name
                 )
                 
                 # Train

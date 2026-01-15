@@ -121,6 +121,8 @@ class Trainer:
         min_delta=None,
         scheduler_factor=None,
         scheduler_patience=None,
+        optimizer_name='adamw',
+        scheduler_name='reduce_on_plateau',
     ):
         """
         Initialize trainer with configuration.
@@ -138,6 +140,8 @@ class Trainer:
             min_delta: Early stopping minimum delta
             scheduler_factor: LR reduction factor
             scheduler_patience: Scheduler patience
+            optimizer_name: 'adam' or 'adamw'
+            scheduler_name: 'reduce_on_plateau', 'cosine', or 'step'
         """
         # Use defaults from config
         self.device = device or DEVICE
@@ -151,6 +155,8 @@ class Trainer:
         self.min_delta = min_delta if min_delta is not None else MIN_DELTA
         self.scheduler_factor = scheduler_factor if scheduler_factor is not None else LR_SCHEDULER_FACTOR
         self.scheduler_patience = scheduler_patience if scheduler_patience is not None else LR_SCHEDULER_PATIENCE
+        self.optimizer_name = optimizer_name.lower()
+        self.scheduler_name = scheduler_name.lower()
         
         self.model = model.to(self.device)
         
@@ -175,6 +181,57 @@ class Trainer:
             mode='min'
         )
     
+    def _create_optimizer(self, params, lr):
+        """
+        Create optimizer based on optimizer_name.
+        
+        Args:
+            params: Model parameters to optimize
+            lr: Learning rate
+            
+        Returns:
+            torch optimizer
+        """
+        if self.optimizer_name == 'adam':
+            return torch.optim.Adam(params, lr=lr, weight_decay=self.weight_decay)
+        elif self.optimizer_name == 'adamw':
+            return torch.optim.AdamW(params, lr=lr, weight_decay=self.weight_decay)
+        else:
+            raise ValueError(f"Unknown optimizer: {self.optimizer_name}")
+    
+    def _create_scheduler(self, optimizer, total_epochs):
+        """
+        Create learning rate scheduler based on scheduler_name.
+        
+        Args:
+            optimizer: torch optimizer
+            total_epochs: Total number of epochs for this phase
+            
+        Returns:
+            torch scheduler (or None for reduce_on_plateau, handled separately)
+        """
+        if self.scheduler_name == 'reduce_on_plateau':
+            return torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='min',
+                factor=self.scheduler_factor,
+                patience=self.scheduler_patience
+            )
+        elif self.scheduler_name == 'cosine':
+            return torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=total_epochs,
+                eta_min=1e-7
+            )
+        elif self.scheduler_name == 'step':
+            return torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=max(1, total_epochs // 3),
+                gamma=0.5
+            )
+        else:
+            raise ValueError(f"Unknown scheduler: {self.scheduler_name}")
+
     def _train_epoch(self, train_loader, optimizer):
         """Train for one epoch."""
         self.model.train()
@@ -244,24 +301,22 @@ class Trainer:
         freeze_backbone(self.model)
         
         # Optimizer for Phase A (head only)
-        optimizer = torch.optim.AdamW(
+        optimizer = self._create_optimizer(
             filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr=self.head_lr,
-            weight_decay=self.weight_decay
+            lr=self.head_lr
         )
         
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            mode='min',
-            factor=self.scheduler_factor,
-            patience=self.scheduler_patience
-        )
+        scheduler = self._create_scheduler(optimizer, self.freeze_epochs)
         
         for epoch in range(self.freeze_epochs):
             train_loss = self._train_epoch(train_loader, optimizer)
             val_loss = self._validate(val_loader)
             
-            scheduler.step(val_loss)
+            # Step scheduler (handle reduce_on_plateau differently)
+            if self.scheduler_name == 'reduce_on_plateau':
+                scheduler.step(val_loss)
+            else:
+                scheduler.step()
             
             self.history['train_loss'].append(train_loss)
             self.history['val_loss'].append(val_loss)
@@ -299,17 +354,13 @@ class Trainer:
                 self.backbone_lr_multiplier
             )
             
-            optimizer = torch.optim.AdamW(
-                param_groups,
-                weight_decay=self.weight_decay
-            )
+            # Create optimizer with param groups
+            if self.optimizer_name == 'adam':
+                optimizer = torch.optim.Adam(param_groups, weight_decay=self.weight_decay)
+            else:  # adamw
+                optimizer = torch.optim.AdamW(param_groups, weight_decay=self.weight_decay)
             
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode='min',
-                factor=self.scheduler_factor,
-                patience=self.scheduler_patience
-            )
+            scheduler = self._create_scheduler(optimizer, self.finetune_epochs)
             
             # Reset early stopping for Phase B
             self.early_stopping.counter = 0
@@ -319,7 +370,11 @@ class Trainer:
                 train_loss = self._train_epoch(train_loader, optimizer)
                 val_loss = self._validate(val_loader)
                 
-                scheduler.step(val_loss)
+                # Step scheduler (handle reduce_on_plateau differently)
+                if self.scheduler_name == 'reduce_on_plateau':
+                    scheduler.step(val_loss)
+                else:
+                    scheduler.step()
                 
                 self.history['train_loss'].append(train_loss)
                 self.history['val_loss'].append(val_loss)

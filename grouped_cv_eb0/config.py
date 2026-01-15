@@ -92,7 +92,7 @@ WEIGHT_DECAY = 1e-4
 LABEL_SMOOTHING = 0.0  # Set > 0 for label smoothing (e.g., 0.1)
 
 # Early stopping
-PATIENCE = 7
+PATIENCE = 5
 MIN_DELTA = 1e-4
 
 # Learning rate scheduler
@@ -139,9 +139,14 @@ OPTUNA_STUDY_NAME = "als_classification_cv"
 OPTUNA_HEAD_LR_RANGE = (1e-4, 1e-2)
 OPTUNA_BACKBONE_LR_MULT_RANGE = (0.01, 0.3)
 OPTUNA_WEIGHT_DECAY_RANGE = (1e-6, 1e-3)
-OPTUNA_DROPOUT_RANGE = (0.1, 0.5)
-OPTUNA_LABEL_SMOOTHING_RANGE = (0.0, 0.2)
+OPTUNA_DROPOUT_RANGE = (0.2, 0.5)  # Narrowed from 0.1-0.5
+OPTUNA_LABEL_SMOOTHING_RANGE = (0.05, 0.05)  # Fixed to 0.05
 OPTUNA_FREEZE_EPOCHS_RANGE = (3, 5)
+
+# New categorical hyperparameters
+OPTUNA_BATCH_SIZE_CHOICES = [8, 16, 32]
+OPTUNA_OPTIMIZER_CHOICES = ['adamw']  # Fixed to AdamW
+OPTUNA_SCHEDULER_CHOICES = ['reduce_on_plateau']  # Fixed to ReduceOnPlateau
 
 # =============================================================================
 # CAM CONFIGURATION
