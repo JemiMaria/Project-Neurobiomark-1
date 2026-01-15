@@ -384,10 +384,24 @@ def train_single_run(train_loader, val_loader, full_loader, metadata, run_id, se
     model = create_model(pretrained=True)
     model = model.to(device)
     
-    # Loss function: BCEWithLogitsLoss without pos_weight
-    # Using label smoothing instead of pos_weight for class imbalance
-    criterion = nn.BCEWithLogitsLoss()
-    print(f"Using BCEWithLogitsLoss (pos_weight=None, label_smoothing={LABEL_SMOOTHING})")
+    # Compute pos_weight from training data for class balancing
+    # pos_weight = n_negative / n_positive (weight for positive class)
+    train_labels = []
+    for _, labels, _ in train_loader:
+        train_labels.extend(labels.numpy().tolist())
+    n_positive = sum(train_labels)
+    n_negative = len(train_labels) - n_positive
+    
+    if n_positive > 0:
+        pos_weight_value = n_negative / n_positive
+    else:
+        pos_weight_value = 1.0
+    
+    pos_weight = torch.tensor([pos_weight_value], device=device)
+    
+    # Loss function: BCEWithLogitsLoss with balanced class weight
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    print(f"Using BCEWithLogitsLoss (pos_weight={pos_weight_value:.4f}, n_pos={n_positive}, n_neg={n_negative})")
     
     # Optimizer
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)

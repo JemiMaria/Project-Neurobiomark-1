@@ -71,16 +71,17 @@ NUM_EPOCHS = 25
 EARLY_STOPPING_PATIENCE = 3  # Stop if val_loss doesn't improve for 3 consecutive epochs
 
 # Label smoothing for regularization (reduces overconfidence)
-LABEL_SMOOTHING = 0.05
+LABEL_SMOOTHING = 0.05  # Kept for reference, but not used (replaced by pos_weight)
 
 # Learning rate scheduler settings
 LR_SCHEDULER_FACTOR = 0.5    # Reduce LR by half
 LR_SCHEDULER_PATIENCE = 2    # After 2 epochs without improvement
 
 # Class imbalance handling
-# Using label smoothing instead of pos_weight for majority class imbalance
-# pos_weight is set to None (not used)
-POS_WEIGHT = None
+# Using pos_weight (balanced class weights) computed dynamically from training data
+# pos_weight = n_negative / n_positive (weights the positive class higher when minority)
+# This replaces label smoothing for handling class imbalance
+USE_BALANCED_WEIGHTS = True  # Enable dynamic pos_weight computation
 
 # Multiple runs configuration
 NUM_RUNS = 5

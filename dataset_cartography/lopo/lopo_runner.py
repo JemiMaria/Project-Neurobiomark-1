@@ -75,6 +75,63 @@ def get_lopo_splits(metadata):
         yield fold_idx, held_out_patient, train_df, test_df
 
 
+def create_patient_balanced_sampler(train_df):
+    """
+    Create a patient-balanced weighted sampler.
+    
+    This sampler ensures:
+    1. Each PATIENT has equal probability of being sampled (regardless of image count)
+    2. Each CLASS (Case/Control) has equal probability
+    
+    Weight formula for each image:
+        weight = (1 / n_images_in_patient) * (1 / n_patients_in_class)
+    
+    This way:
+    - All images from a patient sum to (1 / n_patients_in_class)
+    - All patients in a class sum to 1.0
+    - Both classes contribute equally
+    
+    Args:
+        train_df: Training metadata with 'patient_id' and 'label' columns
+        
+    Returns:
+        WeightedRandomSampler
+    """
+    from torch.utils.data import WeightedRandomSampler
+    
+    # Count images per patient
+    images_per_patient = train_df.groupby('patient_id').size().to_dict()
+    
+    # Count patients per class
+    patient_labels = train_df.groupby('patient_id')['label'].first()
+    n_patients_class_0 = (patient_labels == 0).sum()
+    n_patients_class_1 = (patient_labels == 1).sum()
+    
+    print(f"    Patient-balanced sampling: {n_patients_class_1} Case patients, {n_patients_class_0} Control patients")
+    
+    # Compute weight for each image
+    weights = []
+    for _, row in train_df.iterrows():
+        patient_id = row['patient_id']
+        label = row['label']
+        
+        n_images = images_per_patient[patient_id]
+        n_patients_in_class = n_patients_class_1 if label == 1 else n_patients_class_0
+        
+        # Weight = equal contribution per patient, equal contribution per class
+        weight = (1.0 / n_images) * (1.0 / n_patients_in_class)
+        weights.append(weight)
+    
+    # Create sampler
+    sampler = WeightedRandomSampler(
+        weights=weights,
+        num_samples=len(weights),
+        replacement=True
+    )
+    
+    return sampler
+
+
 def create_fold_dataloaders(train_df, test_df, batch_size=8):
     """
     Create dataloaders for a single LOPO fold.
@@ -95,9 +152,9 @@ def create_fold_dataloaders(train_df, test_df, batch_size=8):
     train_dataset = BrainTissueDataset(train_df, transform=transform)
     test_dataset = BrainTissueDataset(test_df, transform=transform)
     
-    # Create weighted sampler for training (class balance)
-    train_labels = train_df['label'].values
-    sampler = create_weighted_sampler(train_labels)
+    # Create patient-balanced sampler (not just class-balanced)
+    # This ensures each patient contributes equally regardless of image count
+    sampler = create_patient_balanced_sampler(train_df)
     
     # Create dataloaders
     train_loader = DataLoader(
@@ -165,7 +222,7 @@ def compute_epoch_predictions_lopo(model, dataloader, metadata, device):
     return predictions
 
 
-def train_single_fold_seed(train_loader, test_loader, test_df, fold_idx, 
+def train_single_fold_seed(train_loader, test_loader, train_df, test_df, fold_idx, 
                            held_out_patient, seed, device):
     """
     Train model for a single LOPO fold and seed.
@@ -173,6 +230,7 @@ def train_single_fold_seed(train_loader, test_loader, test_df, fold_idx,
     Args:
         train_loader: Training dataloader
         test_loader: Test dataloader (held-out patient)
+        train_df: Training metadata (for patient-level pos_weight)
         test_df: Test metadata
         fold_idx: Fold index
         held_out_patient: Patient ID being held out
@@ -192,8 +250,23 @@ def train_single_fold_seed(train_loader, test_loader, test_df, fold_idx,
     model = create_model(pretrained=True)
     model = model.to(device)
     
-    # Loss function
-    criterion = nn.BCEWithLogitsLoss()
+    # Compute pos_weight at PATIENT level for class balancing
+    # pos_weight = n_negative_patients / n_positive_patients
+    # This ensures patient-level fairness in the loss function
+    patient_labels = train_df.groupby('patient_id')['label'].first()
+    n_pos_patients = (patient_labels == 1).sum()
+    n_neg_patients = (patient_labels == 0).sum()
+    
+    if n_pos_patients > 0:
+        pos_weight_value = n_neg_patients / n_pos_patients
+    else:
+        pos_weight_value = 1.0
+    
+    pos_weight = torch.tensor([pos_weight_value], device=device)
+    print(f"    Patient-level pos_weight={pos_weight_value:.4f} (n_pos_patients={n_pos_patients}, n_neg_patients={n_neg_patients})")
+    
+    # Loss function with balanced class weight
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     
     # Optimizer
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
@@ -386,7 +459,7 @@ def run_lopo_evaluation(metadata=None, seeds=None, device=None):
             
             # Train single fold/seed
             epoch_preds, train_log, best_epoch = train_single_fold_seed(
-                train_loader, test_loader, test_df,
+                train_loader, test_loader, train_df, test_df,
                 fold_idx, held_out_patient, seed, device
             )
             
