@@ -21,8 +21,14 @@ import sys
 import os
 from pathlib import Path
 
+# Suppress albumentations version check warnings
+os.environ['ALBUMENTATIONS_CHECK_VERSION'] = '0'
+
 # Ensure proper imports
 sys.path.insert(0, str(Path(__file__).parent))
+
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='albumentations')
 
 import torch
 import numpy as np
