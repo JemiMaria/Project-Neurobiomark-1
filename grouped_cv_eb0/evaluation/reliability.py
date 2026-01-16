@@ -159,16 +159,21 @@ def generate_evaluation_report(
     pooled_spec, pooled_spec_lo, pooled_spec_hi = compute_wilson_ci(pooled_tn, pooled_tn + pooled_fp)
     
     # Mean ± std across folds
+    sens_values = [m['sensitivity'] for m in fold_metrics_list]
+    spec_values = [m['specificity'] for m in fold_metrics_list]
+    ba_values = [m['balanced_accuracy'] for m in fold_metrics_list]
+    auc_values = [m['roc_auc'] for m in fold_metrics_list if not np.isnan(m['roc_auc'])]
+    
     summary = {
         'n_folds': len(fold_metrics_list),
-        'sensitivity_mean': np.mean([m['sensitivity'] for m in fold_metrics_list]),
-        'sensitivity_std': np.std([m['sensitivity'] for m in fold_metrics_list]),
-        'specificity_mean': np.mean([m['specificity'] for m in fold_metrics_list]),
-        'specificity_std': np.std([m['specificity'] for m in fold_metrics_list]),
-        'balanced_accuracy_mean': np.mean([m['balanced_accuracy'] for m in fold_metrics_list]),
-        'balanced_accuracy_std': np.std([m['balanced_accuracy'] for m in fold_metrics_list]),
-        'roc_auc_mean': np.mean([m['roc_auc'] for m in fold_metrics_list if not np.isnan(m['roc_auc'])]),
-        'roc_auc_std': np.std([m['roc_auc'] for m in fold_metrics_list if not np.isnan(m['roc_auc'])]),
+        'sensitivity_mean': np.mean(sens_values),
+        'sensitivity_std': np.std(sens_values),
+        'specificity_mean': np.mean(spec_values),
+        'specificity_std': np.std(spec_values),
+        'balanced_accuracy_mean': np.mean(ba_values),
+        'balanced_accuracy_std': np.std(ba_values),
+        'roc_auc_mean': np.mean(auc_values) if auc_values else np.nan,
+        'roc_auc_std': np.std(auc_values) if auc_values else np.nan,
         'pooled_sensitivity': pooled_sens,
         'pooled_sensitivity_ci_lower': pooled_sens_lo,
         'pooled_sensitivity_ci_upper': pooled_sens_hi,
@@ -201,15 +206,37 @@ def generate_evaluation_report(
         borderline_rate = len(combined_borderline) / total_patients if total_patients > 0 else 0
         summary['borderline_rate'] = borderline_rate
     
-    # Print summary
-    print(f"\n  Summary:")
+    # ===== Print detailed summary =====
+    print(f"\n  {'='*55}")
+    print(f"  CROSS-VALIDATION RESULTS")
+    print(f"  {'='*55}")
+    
+    # Per-fold sensitivity and specificity
+    print(f"\n  Per-Fold Metrics:")
+    print(f"  {'Fold':<6} {'Sens':<8} {'Spec':<8} {'Bal Acc':<10} {'AUC':<8}")
+    print(f"  {'-'*45}")
+    for fold_id, metrics in enumerate(fold_metrics_list):
+        sens = metrics['sensitivity']
+        spec = metrics['specificity']
+        ba = metrics['balanced_accuracy']
+        auc = metrics['roc_auc']
+        print(f"  {fold_id:<6} {sens:.3f}    {spec:.3f}    {ba:.3f}      {auc:.3f}")
+    print(f"  {'-'*45}")
+    
+    # Mean metrics (NOT max!)
+    print(f"\n  Mean Metrics Across Folds:")
     print(f"    Sensitivity: {summary['sensitivity_mean']:.3f} ± {summary['sensitivity_std']:.3f}")
     print(f"    Specificity: {summary['specificity_mean']:.3f} ± {summary['specificity_std']:.3f}")
     print(f"    Balanced Acc: {summary['balanced_accuracy_mean']:.3f} ± {summary['balanced_accuracy_std']:.3f}")
-    print(f"    ROC AUC: {summary['roc_auc_mean']:.3f} ± {summary['roc_auc_std']:.3f}")
-    print(f"\n  Pooled 95% Wilson CIs:")
-    print(f"    Sensitivity: [{pooled_sens_lo:.3f}, {pooled_sens_hi:.3f}]")
-    print(f"    Specificity: [{pooled_spec_lo:.3f}, {pooled_spec_hi:.3f}]")
+    if not np.isnan(summary['roc_auc_mean']):
+        print(f"    ROC AUC: {summary['roc_auc_mean']:.3f} ± {summary['roc_auc_std']:.3f}")
+    
+    # Pooled 95% Wilson CIs
+    print(f"\n  Pooled 95% Wilson Confidence Intervals:")
+    print(f"    Sensitivity: {pooled_sens:.3f} [{pooled_sens_lo:.3f}, {pooled_sens_hi:.3f}]")
+    print(f"    Specificity: {pooled_spec:.3f} [{pooled_spec_lo:.3f}, {pooled_spec_hi:.3f}]")
+    
+    print(f"\n  {'='*55}")
     
     return summary
 
