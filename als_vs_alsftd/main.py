@@ -111,22 +111,40 @@ def stage_3_cartography(all_epoch_predictions, df):
         print(f"\n  Processing seed {seed}...")
         
         # Filter predictions for this seed
-        seed_predictions = {
+        seed_results = {
             k: v for k, v in all_epoch_predictions.items()
             if k[1] == seed  # k = (fold, seed)
         }
         
-        if not seed_predictions:
+        if not seed_results:
             print(f"    Warning: No predictions for seed {seed}")
             continue
         
-        # Compute image-level cartography
-        image_carto = compute_windowed_cartography_single_seed(seed_predictions, seed)
-        all_image_cartography.append(image_carto)
+        # Compute image-level cartography for each fold
+        seed_image_cartography = []
+        seed_patient_cartography = []
         
-        # Aggregate to patient level
-        patient_carto = aggregate_to_patient_level_single_seed(image_carto, seed)
-        all_patient_cartography.append(patient_carto)
+        for (fold_id, _), result_data in seed_results.items():
+            epoch_predictions = result_data['epoch_predictions']
+            history = result_data['history']
+            
+            # Compute image-level cartography
+            image_carto = compute_windowed_cartography_single_seed(
+                epoch_predictions, history, fold_id, seed
+            )
+            if len(image_carto) > 0:
+                seed_image_cartography.append(image_carto)
+                
+                # Aggregate to patient level
+                patient_carto = aggregate_to_patient_level_single_seed(image_carto)
+                if len(patient_carto) > 0:
+                    seed_patient_cartography.append(patient_carto)
+        
+        # Combine folds for this seed
+        if seed_image_cartography:
+            all_image_cartography.extend(seed_image_cartography)
+        if seed_patient_cartography:
+            all_patient_cartography.extend(seed_patient_cartography)
     
     # Combine across seeds
     if all_image_cartography:

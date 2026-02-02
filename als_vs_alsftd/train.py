@@ -311,10 +311,11 @@ def train_fold(train_df, test_df, fold_id, seed, config=None, verbose=True):
         # Check early stopping
         improved = early_stopping(val_loss, model)
         
-        if verbose and epoch % 5 == 0:
-            status = "✓" if improved else " "
+        # Print per-epoch metrics
+        if verbose:
+            status = "✓ (best)" if improved else " "
             print(f"      Epoch {epoch+1:2d}/{NUM_EPOCHS} | "
-                  f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | {status}")
+                  f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | LR: {current_lr:.2e} {status}")
         
         if early_stopping.early_stop:
             if verbose:
@@ -448,13 +449,19 @@ def train_all_folds(df):
                 test_df=test_df,
                 fold_id=fold_idx,
                 seed=seed,
-                verbose=False
+                verbose=True
             )
             
-            # Store epoch predictions for cartography
-            all_epoch_predictions[(fold_idx, seed)] = results['epoch_predictions']
+            # Store epoch predictions and history for cartography
+            all_epoch_predictions[(fold_idx, seed)] = {
+                'epoch_predictions': results['epoch_predictions'],
+                'history': results['history']
+            }
             
+            # Print training summary
             print(f"    Best epoch: {results['best_epoch']}")
+            best_loss = results['history']['val_loss'][results['best_epoch']]
+            print(f"    Best val_loss: {best_loss:.4f}")
     
     print(f"\n{'='*60}")
     print(f"TRAINING COMPLETE")

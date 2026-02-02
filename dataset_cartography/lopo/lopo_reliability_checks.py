@@ -31,10 +31,7 @@ import matplotlib.pyplot as plt
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    from config import LOPO_DIR
-except ModuleNotFoundError:
-    from dataset_cartography.config import LOPO_DIR
+from config import LOPO_DIR
 
 
 # =============================================================================
@@ -498,307 +495,11 @@ def identify_hardest_patients(instability_df, patient_final_df):
 
 
 # =============================================================================
-# E) EXCLUDED PATIENTS SENSITIVITY ANALYSIS
-# =============================================================================
-
-def identify_exclusion_groups(patient_final_df, borderline_threshold=0.1):
-    """
-    Identify patients for exclusion in sensitivity analysis.
-    
-    Groups:
-    - Borderline: |mean_prob - 0.5| <= borderline_threshold
-    - Hardest: Single patient with lowest mean_correctness (tie-breaker: closest to threshold)
-    - Both: Union of borderline and hardest
-    
-    Args:
-        patient_final_df: DataFrame with patient-level results
-        borderline_threshold: Threshold for borderline classification (default 0.1)
-    
-    Returns:
-        dict with keys 'borderline_ids', 'hardest_id', 'both_ids', 'exclusion_details_df'
-    """
-    # Determine column names
-    patient_col = 'fold_patient_id' if 'fold_patient_id' in patient_final_df.columns else 'patient_id'
-    prob_col = 'mean_prob_across_seeds'
-    correctness_col = 'mean_correctness_across_seeds'
-    
-    # Calculate distance to threshold for all patients
-    df = patient_final_df.copy()
-    df['prob_margin_to_threshold'] = np.abs(df[prob_col] - 0.5)
-    
-    # Group 1: Borderline patients
-    borderline_mask = df['prob_margin_to_threshold'] <= borderline_threshold
-    borderline_ids = set(df[borderline_mask][patient_col].tolist())
-    
-    # Group 2: Hardest patient (lowest correctness, tie-breaker: closest to threshold)
-    df_sorted = df.sort_values(
-        [correctness_col, 'prob_margin_to_threshold'],
-        ascending=[True, True]
-    )
-    hardest_id = df_sorted.iloc[0][patient_col]
-    
-    # Group 3: Union of borderline and hardest
-    both_ids = borderline_ids | {hardest_id}
-    
-    # Create exclusion details dataframe
-    exclusion_records = []
-    
-    for patient_id in both_ids:
-        patient_row = df[df[patient_col] == patient_id].iloc[0]
-        reasons = []
-        if patient_id in borderline_ids:
-            reasons.append('borderline')
-        if patient_id == hardest_id:
-            reasons.append('hardest')
-        
-        exclusion_records.append({
-            'patient_id': patient_id,
-            'reason': ' + '.join(reasons) if len(reasons) > 1 else reasons[0],
-            'y_true': patient_row['y_true'],
-            'mean_prob_across_seeds': patient_row[prob_col],
-            'mean_correctness_across_seeds': patient_row[correctness_col],
-            'prob_margin_to_threshold': patient_row['prob_margin_to_threshold']
-        })
-    
-    exclusion_details_df = pd.DataFrame(exclusion_records)
-    if len(exclusion_details_df) > 0:
-        exclusion_details_df = exclusion_details_df.sort_values('reason')
-    
-    return {
-        'borderline_ids': borderline_ids,
-        'hardest_id': hardest_id,
-        'both_ids': both_ids,
-        'exclusion_details_df': exclusion_details_df
-    }
-
-
-def compute_metrics_for_subset(patient_df, scenario_name):
-    """
-    Compute clinical metrics for a subset of patients.
-    
-    Reuses the same Wilson CI computation as baseline.
-    
-    Args:
-        patient_df: Filtered DataFrame with patient subset
-        scenario_name: Name for this scenario (e.g., 'baseline', 'no_borderline')
-    
-    Returns:
-        dict with all metric values and CIs
-    """
-    n_patients = len(patient_df)
-    
-    # Handle empty dataframe
-    if n_patients == 0:
-        return {
-            'scenario': scenario_name,
-            'n_patients': 0,
-            'n_cases': 0,
-            'n_controls': 0,
-            'sensitivity': np.nan,
-            'sensitivity_ci_lower': np.nan,
-            'sensitivity_ci_upper': np.nan,
-            'specificity': np.nan,
-            'specificity_ci_lower': np.nan,
-            'specificity_ci_upper': np.nan,
-            'balanced_accuracy': np.nan,
-            'balanced_accuracy_ci_lower': np.nan,
-            'balanced_accuracy_ci_upper': np.nan,
-            'overall_accuracy': np.nan,
-            'overall_accuracy_ci_lower': np.nan,
-            'overall_accuracy_ci_upper': np.nan
-        }
-    
-    # Extract true labels and predictions
-    y_true = patient_df['y_true'].values
-    y_prob = patient_df['mean_prob_across_seeds'].values
-    y_pred = (y_prob >= 0.5).astype(int)
-    
-    # Confusion matrix components
-    true_positives = np.sum((y_true == 1) & (y_pred == 1))
-    true_negatives = np.sum((y_true == 0) & (y_pred == 0))
-    false_positives = np.sum((y_true == 0) & (y_pred == 1))
-    false_negatives = np.sum((y_true == 1) & (y_pred == 0))
-    
-    total_cases = true_positives + false_negatives
-    total_controls = true_negatives + false_positives
-    total_correct = true_positives + true_negatives
-    
-    # Compute metrics with Wilson CIs
-    sens_value, sens_ci_lower, sens_ci_upper = compute_wilson_confidence_interval(
-        true_positives, total_cases
-    )
-    spec_value, spec_ci_lower, spec_ci_upper = compute_wilson_confidence_interval(
-        true_negatives, total_controls
-    )
-    
-    # Balanced Accuracy
-    balanced_acc = (sens_value + spec_value) / 2 if not (np.isnan(sens_value) or np.isnan(spec_value)) else np.nan
-    balanced_acc_ci_lower = (sens_ci_lower + spec_ci_lower) / 2 if not (np.isnan(sens_ci_lower) or np.isnan(spec_ci_lower)) else np.nan
-    balanced_acc_ci_upper = (sens_ci_upper + spec_ci_upper) / 2 if not (np.isnan(sens_ci_upper) or np.isnan(spec_ci_upper)) else np.nan
-    
-    # Overall Accuracy
-    acc_value, acc_ci_lower, acc_ci_upper = compute_wilson_confidence_interval(
-        total_correct, n_patients
-    )
-    
-    return {
-        'scenario': scenario_name,
-        'n_patients': n_patients,
-        'n_cases': int(total_cases),
-        'n_controls': int(total_controls),
-        'sensitivity': sens_value,
-        'sensitivity_ci_lower': sens_ci_lower,
-        'sensitivity_ci_upper': sens_ci_upper,
-        'specificity': spec_value,
-        'specificity_ci_lower': spec_ci_lower,
-        'specificity_ci_upper': spec_ci_upper,
-        'balanced_accuracy': balanced_acc,
-        'balanced_accuracy_ci_lower': balanced_acc_ci_lower,
-        'balanced_accuracy_ci_upper': balanced_acc_ci_upper,
-        'overall_accuracy': acc_value,
-        'overall_accuracy_ci_lower': acc_ci_lower,
-        'overall_accuracy_ci_upper': acc_ci_upper
-    }
-
-
-def run_sensitivity_analysis(patient_final_df, output_dir, borderline_threshold=0.1):
-    """
-    Run excluded patients sensitivity analysis.
-    
-    Computes clinical metrics after excluding:
-    - Borderline patients (probability near threshold)
-    - Hardest patient (lowest correctness)
-    - Both combined
-    
-    Args:
-        patient_final_df: DataFrame with patient-level results
-        output_dir: Directory to save outputs
-        borderline_threshold: Threshold for borderline classification (default 0.1)
-    
-    Returns:
-        dict with sensitivity analysis results
-    """
-    print("\n" + "="*60)
-    print("E) EXCLUDED PATIENTS SENSITIVITY ANALYSIS")
-    print("="*60)
-    
-    # Determine column names
-    patient_col = 'fold_patient_id' if 'fold_patient_id' in patient_final_df.columns else 'patient_id'
-    
-    # Step 1: Identify exclusion groups
-    exclusion_groups = identify_exclusion_groups(patient_final_df, borderline_threshold)
-    borderline_ids = exclusion_groups['borderline_ids']
-    hardest_id = exclusion_groups['hardest_id']
-    both_ids = exclusion_groups['both_ids']
-    exclusion_details_df = exclusion_groups['exclusion_details_df']
-    
-    print(f"\nBorderline patients (|prob - 0.5| <= {borderline_threshold}):")
-    if len(borderline_ids) > 0:
-        for pid in sorted(borderline_ids):
-            print(f"  - {pid}")
-    else:
-        print("  None")
-    
-    print(f"\nHardest patient (lowest correctness):")
-    print(f"  - {hardest_id}")
-    
-    print(f"\nCombined (both):")
-    for pid in sorted(both_ids):
-        print(f"  - {pid}")
-    
-    # Step 2: Create filtered dataframes
-    df_baseline = patient_final_df.copy()
-    df_no_borderline = patient_final_df[~patient_final_df[patient_col].isin(borderline_ids)].copy()
-    df_no_hardest = patient_final_df[patient_final_df[patient_col] != hardest_id].copy()
-    df_no_both = patient_final_df[~patient_final_df[patient_col].isin(both_ids)].copy()
-    
-    # Step 3: Compute metrics for each scenario
-    metrics_baseline = compute_metrics_for_subset(df_baseline, 'baseline')
-    metrics_no_borderline = compute_metrics_for_subset(df_no_borderline, 'no_borderline')
-    metrics_no_hardest = compute_metrics_for_subset(df_no_hardest, 'no_hardest')
-    metrics_no_both = compute_metrics_for_subset(df_no_both, 'no_both')
-    
-    # Check for edge cases
-    for scenario_name, df in [('no_borderline', df_no_borderline), 
-                               ('no_hardest', df_no_hardest), 
-                               ('no_both', df_no_both)]:
-        n_cases = df['y_true'].sum()
-        n_controls = len(df) - n_cases
-        if n_cases == 0:
-            print(f"\n⚠ WARNING: Scenario '{scenario_name}' removed all positive cases!")
-        if n_controls == 0:
-            print(f"\n⚠ WARNING: Scenario '{scenario_name}' removed all negative cases!")
-    
-    # Step 4: Create comparison DataFrame
-    comparison_df = pd.DataFrame([
-        metrics_baseline,
-        metrics_no_borderline,
-        metrics_no_hardest,
-        metrics_no_both
-    ])
-    
-    # Step 5: Print comparison summary
-    print(f"\n" + "-"*60)
-    print("Sensitivity Analysis Results:")
-    print("-"*60)
-    
-    def format_change(baseline_val, new_val):
-        if np.isnan(baseline_val) or np.isnan(new_val):
-            return "N/A"
-        delta = new_val - baseline_val
-        sign = "+" if delta >= 0 else ""
-        return f"{sign}{delta:.4f}"
-    
-    baseline_sens = metrics_baseline['sensitivity']
-    baseline_spec = metrics_baseline['specificity']
-    baseline_bal_acc = metrics_baseline['balanced_accuracy']
-    
-    for scenario, metrics in [('no_borderline', metrics_no_borderline),
-                               ('no_hardest', metrics_no_hardest),
-                               ('no_both', metrics_no_both)]:
-        print(f"\n{scenario.upper()} (n={metrics['n_patients']} patients):")
-        
-        sens_change = format_change(baseline_sens, metrics['sensitivity'])
-        spec_change = format_change(baseline_spec, metrics['specificity'])
-        bal_acc_change = format_change(baseline_bal_acc, metrics['balanced_accuracy'])
-        
-        sens_str = f"{metrics['sensitivity']:.4f}" if not np.isnan(metrics['sensitivity']) else "N/A"
-        spec_str = f"{metrics['specificity']:.4f}" if not np.isnan(metrics['specificity']) else "N/A"
-        bal_acc_str = f"{metrics['balanced_accuracy']:.4f}" if not np.isnan(metrics['balanced_accuracy']) else "N/A"
-        
-        print(f"  Sensitivity:       {baseline_sens:.4f} → {sens_str} (Δ {sens_change})")
-        print(f"  Specificity:       {baseline_spec:.4f} → {spec_str} (Δ {spec_change})")
-        print(f"  Balanced Accuracy: {baseline_bal_acc:.4f} → {bal_acc_str} (Δ {bal_acc_change})")
-    
-    # Step 6: Save outputs
-    comparison_df.to_csv(os.path.join(output_dir, 'clinical_metrics_excluding_flagged.csv'), index=False)
-    print(f"\n  ✓ Saved: clinical_metrics_excluding_flagged.csv")
-    
-    exclusion_details_df.to_csv(os.path.join(output_dir, 'excluded_patients_used.csv'), index=False)
-    print(f"  ✓ Saved: excluded_patients_used.csv")
-    
-    print(f"\nSee clinical_metrics_excluding_flagged.csv for full results.")
-    
-    return {
-        'comparison_df': comparison_df,
-        'exclusion_details_df': exclusion_details_df,
-        'borderline_ids': borderline_ids,
-        'hardest_id': hardest_id,
-        'both_ids': both_ids,
-        'metrics_baseline': metrics_baseline,
-        'metrics_no_borderline': metrics_no_borderline,
-        'metrics_no_hardest': metrics_no_hardest,
-        'metrics_no_both': metrics_no_both
-    }
-
-
-# =============================================================================
 # README GENERATION
 # =============================================================================
 
 def generate_reliability_readme(clinical_metrics_df, margin_summary, borderline_patients, 
-                                hardest_report, instability_df, output_dir,
-                                sensitivity_results=None):
+                                hardest_report, instability_df, output_dir):
     """
     Generate README summarizing reliability check findings.
     """
@@ -894,160 +595,17 @@ This report summarizes the reliability analysis of LOPO (Leave-One-Patient-Out) 
 | `hardest_patient_report.csv` | Complete ranking of patients by difficulty |
 | `plot_seed_variance_prob.png` | Probability variance visualization |
 | `plot_seed_variance_correctness.png` | Correctness variance visualization |
-| `clinical_metrics_excluding_flagged.csv` | Sensitivity analysis metrics |
-| `excluded_patients_used.csv` | Details of excluded patients |
 
 ---
 
 *Generated by LOPO Reliability Checks Module*
 """
     
-    # Add sensitivity analysis section if results provided
-    if sensitivity_results is not None:
-        sensitivity_section = generate_sensitivity_analysis_readme_section(sensitivity_results)
-        # Insert before Output Files section
-        readme_content = readme_content.replace(
-            "---\n\n## Output Files",
-            sensitivity_section + "\n---\n\n## Output Files"
-        )
-    
     readme_path = os.path.join(output_dir, 'RELIABILITY_README.md')
     with open(readme_path, 'w', encoding='utf-8') as f:
         f.write(readme_content)
     
     print(f"  ✓ Saved: RELIABILITY_README.md")
-
-
-def generate_sensitivity_analysis_readme_section(sensitivity_results):
-    """
-    Generate the sensitivity analysis section for the README.
-    
-    Args:
-        sensitivity_results: dict from run_sensitivity_analysis()
-    
-    Returns:
-        str: Markdown content for sensitivity analysis section
-    """
-    borderline_ids = sensitivity_results['borderline_ids']
-    hardest_id = sensitivity_results['hardest_id']
-    both_ids = sensitivity_results['both_ids']
-    exclusion_details_df = sensitivity_results['exclusion_details_df']
-    
-    metrics_baseline = sensitivity_results['metrics_baseline']
-    metrics_no_borderline = sensitivity_results['metrics_no_borderline']
-    metrics_no_hardest = sensitivity_results['metrics_no_hardest']
-    metrics_no_both = sensitivity_results['metrics_no_both']
-    
-    def format_metric(val):
-        return f"{val:.4f}" if not np.isnan(val) else "N/A"
-    
-    def format_change(baseline_val, new_val):
-        if np.isnan(baseline_val) or np.isnan(new_val):
-            return "N/A"
-        delta = new_val - baseline_val
-        sign = "+" if delta >= 0 else ""
-        pct = (delta / baseline_val * 100) if baseline_val != 0 else 0
-        return f"{sign}{delta:.4f} ({sign}{pct:.1f}%)"
-    
-    # Build excluded patients list
-    borderline_list = ", ".join(sorted([str(p) for p in borderline_ids])) if borderline_ids else "None"
-    
-    # Build comparison table
-    comparison_rows = []
-    for scenario, metrics in [('baseline', metrics_baseline),
-                               ('no_borderline', metrics_no_borderline),
-                               ('no_hardest', metrics_no_hardest),
-                               ('no_both', metrics_no_both)]:
-        comparison_rows.append(
-            f"| {scenario} | {metrics['n_patients']} | {metrics['n_cases']} | {metrics['n_controls']} | "
-            f"{format_metric(metrics['sensitivity'])} | {format_metric(metrics['specificity'])} | "
-            f"{format_metric(metrics['balanced_accuracy'])} |"
-        )
-    
-    comparison_table = "\n".join(comparison_rows)
-    
-    # Build change summary
-    sens_change_borderline = format_change(metrics_baseline['sensitivity'], metrics_no_borderline['sensitivity'])
-    spec_change_borderline = format_change(metrics_baseline['specificity'], metrics_no_borderline['specificity'])
-    
-    sens_change_hardest = format_change(metrics_baseline['sensitivity'], metrics_no_hardest['sensitivity'])
-    spec_change_hardest = format_change(metrics_baseline['specificity'], metrics_no_hardest['specificity'])
-    
-    sens_change_both = format_change(metrics_baseline['sensitivity'], metrics_no_both['sensitivity'])
-    spec_change_both = format_change(metrics_baseline['specificity'], metrics_no_both['specificity'])
-    
-    # Clinical interpretation
-    interpretations = []
-    
-    # Check sensitivity changes
-    if not np.isnan(metrics_no_borderline['sensitivity']) and not np.isnan(metrics_baseline['sensitivity']):
-        sens_delta = metrics_no_borderline['sensitivity'] - metrics_baseline['sensitivity']
-        if sens_delta > 0.05:
-            interpretations.append(f"- Excluding borderline patients improved sensitivity by {sens_delta:.1%}")
-        elif sens_delta < -0.05:
-            interpretations.append(f"- Excluding borderline patients decreased sensitivity by {abs(sens_delta):.1%}")
-    
-    if not np.isnan(metrics_no_borderline['specificity']) and not np.isnan(metrics_baseline['specificity']):
-        spec_delta = metrics_no_borderline['specificity'] - metrics_baseline['specificity']
-        if spec_delta > 0.05:
-            interpretations.append(f"- Excluding borderline patients improved specificity by {spec_delta:.1%}")
-        elif spec_delta < -0.05:
-            interpretations.append(f"- Excluding borderline patients decreased specificity by {abs(spec_delta):.1%}")
-    
-    if not np.isnan(metrics_no_both['balanced_accuracy']) and not np.isnan(metrics_baseline['balanced_accuracy']):
-        bal_delta = metrics_no_both['balanced_accuracy'] - metrics_baseline['balanced_accuracy']
-        if bal_delta > 0.05:
-            interpretations.append(f"- Excluding all flagged patients improved balanced accuracy by {bal_delta:.1%}")
-    
-    if not interpretations:
-        interpretations.append("- Excluding flagged patients had minimal impact on overall metrics")
-    
-    interpretation_text = "\n".join(interpretations)
-    
-    section = f"""
----
-
-## E) Sensitivity Analysis (Excluding Flagged Patients)
-
-This analysis examines how clinical metrics change when problematic patients are excluded.
-
-### Excluded Patients
-
-**Borderline Patients** (|prob - 0.5| ≤ 0.1): {borderline_list}
-
-**Hardest Patient** (lowest correctness): {hardest_id}
-
-**Combined**: {", ".join(sorted([str(p) for p in both_ids]))}
-
-### Metrics Comparison
-
-| Scenario | n_patients | n_cases | n_controls | Sensitivity | Specificity | Balanced Accuracy |
-|----------|------------|---------|------------|-------------|-------------|-------------------|
-{comparison_table}
-
-### Change Summary
-
-**Excluding Borderline Patients:**
-- Sensitivity: {sens_change_borderline}
-- Specificity: {spec_change_borderline}
-
-**Excluding Hardest Patient:**
-- Sensitivity: {sens_change_hardest}
-- Specificity: {spec_change_hardest}
-
-**Excluding Both:**
-- Sensitivity: {sens_change_both}
-- Specificity: {spec_change_both}
-
-### Clinical Interpretation
-
-{interpretation_text}
-
-**Note:** This sensitivity analysis helps identify whether certain patients disproportionately affect model performance, 
-potentially indicating labeling issues, atypical presentations, or cases warranting clinical review.
-
-"""
-    return section
 
 
 # =============================================================================
@@ -1116,14 +674,10 @@ def run_reliability_checks():
     hardest_report.to_csv(analysis_dir / "hardest_patient_report.csv", index=False)
     print(f"\n  ✓ Saved: hardest_patient_report.csv")
     
-    # --- E) Excluded Patients Sensitivity Analysis ---
-    sensitivity_results = run_sensitivity_analysis(patient_final_df, analysis_dir)
-    
     # --- Generate README ---
     generate_reliability_readme(
         clinical_metrics_df, margin_summary, borderline_patients,
-        hardest_report, instability_df, analysis_dir,
-        sensitivity_results=sensitivity_results
+        hardest_report, instability_df, analysis_dir
     )
     
     # --- Final Summary ---
@@ -1143,15 +697,13 @@ def run_reliability_checks():
     print(f"  - High-instability patients: {len(high_instab)}")
     
     print(f"  - Borderline patients: {len(borderline_patients)}")
-    print(f"  - Sensitivity analysis: {len(sensitivity_results['both_ids'])} patients flagged")
     
     return {
         'clinical_metrics': clinical_metrics_df,
         'margin_summary': margin_summary,
         'patient_details': patient_details,
         'instability': instability_df,
-        'hardest_report': hardest_report,
-        'sensitivity_analysis': sensitivity_results
+        'hardest_report': hardest_report
     }
 
 

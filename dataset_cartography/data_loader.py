@@ -116,7 +116,7 @@ class BrainTissueDataset(Dataset):
         
         Args:
             metadata: DataFrame with image_no and label columns
-            image_folder: Path to folder containing .tiff images
+            image_folder: Path to folder containing .tif images
             transform: Image transforms to apply
         """
         self.metadata = metadata.reset_index(drop=True)
@@ -141,8 +141,8 @@ class BrainTissueDataset(Dataset):
         image_no = int(row['image_no'])
         label = int(row['label'])
         
-        # Construct image path: e.g., "1.tiff"
-        image_path = os.path.join(self.image_folder, f"{image_no}.tiff")
+        # Construct image path: e.g., "1.tif"
+        image_path = os.path.join(self.image_folder, f"{image_no}.tif")
         
         # Load image
         image = Image.open(image_path).convert('RGB')

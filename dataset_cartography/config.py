@@ -16,8 +16,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent.parent
 
 # Input paths - UPDATE THESE TO YOUR ACTUAL PATHS
-IMAGE_FOLDER = r"C:\path\to\your\images"  # Folder containing 1.tiff, 2.tiff, etc.
-EXCEL_FILE = r"C:\path\to\your\metadata.xlsx"  # Excel file with image metadata
+IMAGE_FOLDER = r"data/raw_images"  # Folder containing 1.tiff, 2.tiff, etc.
+EXCEL_FILE = r"image_keys.xlsx"  # Excel file with image metadata
 
 # Output paths
 OUTPUT_DIR = BASE_DIR / "outputs"

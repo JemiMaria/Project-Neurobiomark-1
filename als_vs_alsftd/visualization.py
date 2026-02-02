@@ -295,9 +295,12 @@ def plot_image_disagreement(image_df, output_dir=None, filename='fig4_image_disa
     set_publication_style()
     
     # Count images per patient
+    # Use mean_correctness_window column from cartography
+    correctness_col = 'mean_correctness_window' if 'mean_correctness_window' in image_df.columns else 'mean_correctness'
+    
     patient_stats = image_df.groupby('patient_id').agg({
         'y_true': 'first',
-        'mean_correctness': ['count', 'mean']
+        correctness_col: ['count', 'mean']
     }).reset_index()
     patient_stats.columns = ['patient_id', 'y_true', 'n_images', 'mean_correctness']
     
